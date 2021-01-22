@@ -41,7 +41,14 @@ func main() {
 }
 
 func foo(w http.ResponseWriter, r *http.Request) {
+	p1 := person{
+		First: "Vuk",
+	}
 
+	err := json.NewEncoder(w).Encode(p1)
+	if err != nil {
+		log.Println("encoded bad data: ", err)
+	}
 }
 
 func bar(w http.ResponseWriter, r *http.Request) {
