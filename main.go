@@ -2,12 +2,15 @@ package main
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha512"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
+	"io"
 	"log"
 	"github.com/dgrijalva/jwt-go"
 	"time"
+	"github.com/gofrs/uuid"
 )
 
 type UserClaims struct {
@@ -27,16 +30,11 @@ func(u *UserClaims) Valid() error {
 	return nil
 }
 
-var key = []byte{}
-
 type person struct {
 	First string
 }
 
 func main() {
-	for i := 1; i <= 64; i++ {
-		key = append(key, byte(i))
-	}
 	pass := "123456789"
 
 	hashedPass, err := hashPassword(pass)
@@ -71,7 +69,7 @@ func comparePassword(password string, hashedPass []byte) error {
 
 func signMessage(msg []byte) ([]byte, error) {
 	//second argument is private key
-	h := hmac.New(sha512.New, key)
+	h := hmac.New(sha512.New, keys[currentKid].key)
 	_, err := h.Write(msg)
 	if err != nil {
 		return nil, fmt.Errorf("Error in signMessage hashing message: %w", err)
@@ -92,7 +90,7 @@ func checkSig(msg, sig []byte) (bool, error){
 }
 func createToken(c *UserClaims) (string, error) {
 	t := jwt.NewWithClaims(jwt.SigningMethodHS512, c)
-	signedToken, err := t.SignedString(key)
+	signedToken, err := t.SignedString(keys[currentKid])
 	if err != nil {
 		return "", fmt.Errorf("Error in create token when signing token: %w", err)
 	}
@@ -100,13 +98,52 @@ func createToken(c *UserClaims) (string, error) {
 	return signedToken, nil
 }
 
+func generateNewKey() error {
+	newKey := make([]byte, 64)
+	_, err :=io.ReadFull(rand.Reader, newKey)
+	if err != nil {
+		return fmt.Errorf("Error in generate a new key %w", err)
+	}
+
+	uid, err := uuid.NewV4()
+	if err != nil {
+		return fmt.Errorf("Error in generate a new kid %w", err)
+	}
+
+	keys[uid.String()] = key {
+		key: newKey,
+		created: time.Now(),
+	}
+	currentKid = uid.String()
+	return nil
+}
+
+type key struct {
+	key []byte
+	created time.Time
+}
+
+var currentKid = ""
+var keys = map[string]key{}
+
 func parseToken(signedToken string) (*UserClaims, error) {
 	t, err := jwt.ParseWithClaims(signedToken, &UserClaims{}, func (t *jwt.Token) (interface{}, error) {
 		if t.Method.Alg() == jwt.SigningMethodHS512.Alg() {
 			return nil, fmt.Errorf("Invalid a signing algorithm")
 		}
 
-		return key, nil
+		//kid = key id, using for rotating keys for better security
+		kid, ok := t.Header["kid"].(string)
+		if !ok {
+			return nil, fmt.Errorf("Invalid key ID")
+		}
+
+		k, ok := keys[kid]
+		if !ok {
+			return nil, fmt.Errorf("Invalid key ID")
+		}
+
+		return k, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("Error in parse token: %w", err)
