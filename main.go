@@ -1,157 +1,87 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha512"
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"io"
 	"log"
-	"github.com/dgrijalva/jwt-go"
-	"time"
-	"github.com/gofrs/uuid"
 )
 
-type UserClaims struct {
-	jwt.StandardClaims
-	SessionID int64
-}
-
-func(u *UserClaims) Valid() error {
-	if !u.VerifyExpiresAt(time.Now().Unix(), true) {
-		return fmt.Errorf("Token has expired")
-	}
-
-	if u.SessionID == 0 {
-		return fmt.Errorf("Invalid session ID")
-	}
-
-	return nil
-}
-
-type person struct {
-	First string
-}
 
 func main() {
-	pass := "123456789"
-
-	hashedPass, err := hashPassword(pass)
+	msg := "Vuk Colovic"
+	password := "ilovedogs"
+	bs, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 	if err != nil {
-		panic(err)
+		log.Panic("couldn't bcrypt password")
+	}
+	bs = bs[:16]
+
+	rslt, err := enDecode(bs, msg)
+
+	fmt.Println("Message: ", msg,  " Encoded:  ", string(rslt))
+
+	rslt2, err := enDecode(bs, string(rslt))
+
+	fmt.Println("Message: ", msg,  " Decoded with same method:  ", string(rslt2))
+
+	wtr := &bytes.Buffer{}
+	encWriter, err := encryptWriter(wtr, bs)
+
+	_, err = io.WriteString(encWriter, msg)
+	if err != nil {
+		log.Panic("writte error %w", err)
 	}
 
-	err = comparePassword(pass, hashedPass)
-	if err != nil {
-		log.Fatalln("Not logged in")
-	}
+	fmt.Println("Same but other way: ", wtr.String())
 
-	log.Println("Logged in!")
 }
 
-
-func hashPassword(password string) ([]byte, error) {
-	bs, err :=  bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+func enDecode(key []byte, input string) ([]byte, error) {
+	// cipher is algoritham, symetrical encription
+	b, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("Error while generationg bcrypt from password: %w", err)
+		return nil, fmt.Errorf("couldn't newCipher %w", err)
 	}
-	return bs, nil
+
+	//inicialization vector
+	iv := make([]byte, aes.BlockSize)
+
+	//create cipher
+	s := cipher.NewCTR(b, iv)
+
+	buff := &bytes.Buffer{}
+	sw := cipher.StreamWriter{
+		S: s,
+		W: buff,
+	}
+
+	_, err = sw.Write([]byte(input))
+	if err != nil {
+		return nil, fmt.Errorf("couldn't sw.Write to streamwritter %w", err)
+	}
+
+	return buff.Bytes(), nil
 }
 
-func comparePassword(password string, hashedPass []byte) error {
-	err := bcrypt.CompareHashAndPassword(hashedPass, []byte(password))
+func encryptWriter(w io.Writer, key []byte) (io.Writer, error) {
+	// cipher is algoritham, symetrical encription
+	b, err := aes.NewCipher(key)
 	if err != nil {
-		return fmt.Errorf("Invalid password: %w", err)
-	}
-	return nil
-}
-
-func signMessage(msg []byte) ([]byte, error) {
-	//second argument is private key
-	h := hmac.New(sha512.New, keys[currentKid].key)
-	_, err := h.Write(msg)
-	if err != nil {
-		return nil, fmt.Errorf("Error in signMessage hashing message: %w", err)
+		return nil, fmt.Errorf("couldn't newCipher %w", err)
 	}
 
-	signature := h.Sum(nil)
-	return signature, nil
-}
+	//inicialization vector
+	iv := make([]byte, aes.BlockSize)
 
-func checkSig(msg, sig []byte) (bool, error){
-	newSig, err := signMessage(msg)
-	if err != nil {
-		return false, fmt.Errorf("Error in check Sig while getting signature of message: %w", err)
-	}
+	//create cipher
+	s := cipher.NewCTR(b, iv)
 
-	same := hmac.Equal(newSig, sig)
-	return same, nil
-}
-func createToken(c *UserClaims) (string, error) {
-	t := jwt.NewWithClaims(jwt.SigningMethodHS512, c)
-	signedToken, err := t.SignedString(keys[currentKid])
-	if err != nil {
-		return "", fmt.Errorf("Error in create token when signing token: %w", err)
-	}
-
-	return signedToken, nil
-}
-
-func generateNewKey() error {
-	newKey := make([]byte, 64)
-	_, err :=io.ReadFull(rand.Reader, newKey)
-	if err != nil {
-		return fmt.Errorf("Error in generate a new key %w", err)
-	}
-
-	uid, err := uuid.NewV4()
-	if err != nil {
-		return fmt.Errorf("Error in generate a new kid %w", err)
-	}
-
-	keys[uid.String()] = key {
-		key: newKey,
-		created: time.Now(),
-	}
-	currentKid = uid.String()
-	return nil
-}
-
-type key struct {
-	key []byte
-	created time.Time
-}
-
-var currentKid = ""
-var keys = map[string]key{}
-
-func parseToken(signedToken string) (*UserClaims, error) {
-	t, err := jwt.ParseWithClaims(signedToken, &UserClaims{}, func (t *jwt.Token) (interface{}, error) {
-		if t.Method.Alg() == jwt.SigningMethodHS512.Alg() {
-			return nil, fmt.Errorf("Invalid a signing algorithm")
-		}
-
-		//kid = key id, using for rotating keys for better security
-		kid, ok := t.Header["kid"].(string)
-		if !ok {
-			return nil, fmt.Errorf("Invalid key ID")
-		}
-
-		k, ok := keys[kid]
-		if !ok {
-			return nil, fmt.Errorf("Invalid key ID")
-		}
-
-		return k, nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("Error in parse token: %w", err)
-	}
-
-	if !t.Valid {
-		return nil, fmt.Errorf("Error in validationg token: %w", err)
-	}
-
-	return t.Claims.(*UserClaims), nil
+	return cipher.StreamWriter{
+		S: s,
+		W: w,
+	}, nil
 }
