@@ -1,42 +1,88 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"os"
+	"net/http"
+	"strings"
 )
 
 func main() {
-	f, err := os.Open("C:\\Users\\vukco\\OneDrive\\Desktop\\test.txt")
-	if err != nil {
-		fmt.Errorf("error opening file")
+	http.HandleFunc("/", foo)
+	http.HandleFunc("/submit", bar)
+	http.ListenAndServe(":8080", nil)
+}
+
+func getCode(msg string) string {
+	h := hmac.New(sha256.New, []byte("ovo je key"))
+	h.Write([]byte(msg))
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func bar(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w,r,"/", http.StatusSeeOther)
+		return
 	}
-	defer f.Close()
 
-	h := sha256.New()
-
-	_, err = io.Copy(h, f)
-	if err != nil {
-		fmt.Errorf("error copying file")
+	email := r.FormValue("email")
+	if email == "" {
+		http.Redirect(w,r,"/", http.StatusSeeOther)
+		return
 	}
 
-	fmt.Printf("type BEFORE sum %T\n", h)
-	fmt.Printf("Value %v\n", h)
+	code := getCode(email)
 
-	xb := h.Sum(nil)
-	fmt.Printf("type AFTER sum %T", xb)
-	fmt.Printf("%v\n", xb)
+	c := http.Cookie{
+		Name: "session",
+		Value: code + "|" + email,
+	}
 
-	xb = h.Sum(nil)
-	fmt.Printf("type AFTER second sum %T", xb)
-	fmt.Printf("%v\n", xb)
+	http.SetCookie(w, &c)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
 
-	xb = h.Sum([]byte("cao"))
-	fmt.Printf("type AFTER third sum %T", xb)
-	fmt.Printf("%v\n", xb)
+func foo(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie("session")
+	if err != nil {
+		c = &http.Cookie{}
+	}
 
-	xb = h.Sum(xb)
-	fmt.Printf("type AFTER fourth sum %T", xb)
-	fmt.Printf("%v\n", xb)
+	message := "Not logged in!"
+
+	xs := strings.SplitN(c.Value, "|", 2)
+	if len(xs) == 2 {
+		cCode := xs[0]
+		cEmail := xs[1]
+
+		code := getCode(cEmail)
+
+		if hmac.Equal([]byte(cCode), []byte(code)) {
+			message = "Logged in!"
+		} else {
+			message = "Not logged in!"
+		}
+	}
+
+		html := `<!DOCTYPE html>
+	<html lang="en"
+		<head>
+			<meta charset="UTF-8"> 
+			<meta name="viewport" content="width=device-width, initial-scale=1.0">
+			<meta http-equiv="X-UA-Compatible" content="ie=edge">
+			<title>HMAC Example</title>
+		</head>
+		<body>
+			<p>Hi Vuk, cookie is ` + c.Value + `</p>
+			<p>` + message + `</p>
+			<form action="/submit" method="post">	
+				<input type="email" name="email"/>
+				<input type="submit" name="Submit"/>
+			</form>
+		</body>
+	</html>`
+
+	io.WriteString(w, html)
 }
