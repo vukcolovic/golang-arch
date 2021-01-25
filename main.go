@@ -1,87 +1,42 @@
 package main
 
 import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
+	"crypto/sha256"
 	"fmt"
-	"golang.org/x/crypto/bcrypt"
 	"io"
-	"log"
+	"os"
 )
 
-
 func main() {
-	msg := "Vuk Colovic"
-	password := "ilovedogs"
-	bs, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	f, err := os.Open("C:\\Users\\vukco\\OneDrive\\Desktop\\test.txt")
 	if err != nil {
-		log.Panic("couldn't bcrypt password")
+		fmt.Errorf("error opening file")
 	}
-	bs = bs[:16]
+	defer f.Close()
 
-	rslt, err := enDecode(bs, msg)
+	h := sha256.New()
 
-	fmt.Println("Message: ", msg,  " Encoded:  ", string(rslt))
-
-	rslt2, err := enDecode(bs, string(rslt))
-
-	fmt.Println("Message: ", msg,  " Decoded with same method:  ", string(rslt2))
-
-	wtr := &bytes.Buffer{}
-	encWriter, err := encryptWriter(wtr, bs)
-
-	_, err = io.WriteString(encWriter, msg)
+	_, err = io.Copy(h, f)
 	if err != nil {
-		log.Panic("writte error %w", err)
+		fmt.Errorf("error copying file")
 	}
 
-	fmt.Println("Same but other way: ", wtr.String())
+	fmt.Printf("type BEFORE sum %T\n", h)
+	fmt.Printf("Value %v\n", h)
 
-}
+	xb := h.Sum(nil)
+	fmt.Printf("type AFTER sum %T", xb)
+	fmt.Printf("%v\n", xb)
 
-func enDecode(key []byte, input string) ([]byte, error) {
-	// cipher is algoritham, symetrical encription
-	b, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("couldn't newCipher %w", err)
-	}
+	xb = h.Sum(nil)
+	fmt.Printf("type AFTER second sum %T", xb)
+	fmt.Printf("%v\n", xb)
 
-	//inicialization vector
-	iv := make([]byte, aes.BlockSize)
+	xb = h.Sum([]byte("cao"))
+	fmt.Printf("type AFTER third sum %T", xb)
+	fmt.Printf("%v\n", xb)
 
-	//create cipher
-	s := cipher.NewCTR(b, iv)
-
-	buff := &bytes.Buffer{}
-	sw := cipher.StreamWriter{
-		S: s,
-		W: buff,
-	}
-
-	_, err = sw.Write([]byte(input))
-	if err != nil {
-		return nil, fmt.Errorf("couldn't sw.Write to streamwritter %w", err)
-	}
-
-	return buff.Bytes(), nil
-}
-
-func encryptWriter(w io.Writer, key []byte) (io.Writer, error) {
-	// cipher is algoritham, symetrical encription
-	b, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("couldn't newCipher %w", err)
-	}
-
-	//inicialization vector
-	iv := make([]byte, aes.BlockSize)
-
-	//create cipher
-	s := cipher.NewCTR(b, iv)
-
-	return cipher.StreamWriter{
-		S: s,
-		W: w,
-	}, nil
+	xb = h.Sum(xb)
+	fmt.Printf("type AFTER fourth sum %T", xb)
+	fmt.Printf("%v\n", xb)
 }
