@@ -1,12 +1,11 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
 	"fmt"
+	"github.com/dgrijalva/jwt-go"
 	"io"
 	"net/http"
-	"strings"
+	"time"
 )
 
 func main() {
@@ -15,10 +14,28 @@ func main() {
 	http.ListenAndServe(":8080", nil)
 }
 
-func getCode(msg string) string {
-	h := hmac.New(sha256.New, []byte("ovo je key"))
-	h.Write([]byte(msg))
-	return fmt.Sprintf("%x", h.Sum(nil))
+type myClaims struct {
+	jwt.StandardClaims
+	Email string
+}
+
+const myKey = "ovo je key"
+
+func getJWT(msg string) (string, error) {
+	claims := myClaims{
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(5 * time.Minute).Unix(),
+				},
+		Email: msg,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &claims)
+	ss, err := token.SignedString([]byte(myKey))
+	if err != nil {
+		return "", fmt.Errorf("couldn.t get JWT signed string in NewWithClaims %w", err)
+	}
+
+	return ss, nil
 }
 
 func bar(w http.ResponseWriter, r *http.Request) {
@@ -27,17 +44,21 @@ func bar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := r.FormValue("email")
+	email := r.FormValue("emailThing")
 	if email == "" {
 		http.Redirect(w,r,"/", http.StatusSeeOther)
 		return
 	}
 
-	code := getCode(email)
+	ss, err := getJWT(email)
+	if err != nil {
+		http.Error(w, "couldn't get JWT token", http.StatusInternalServerError)
+		return
+	}
 
 	c := http.Cookie{
 		Name: "session",
-		Value: code + "|" + email,
+		Value: ss,
 	}
 
 	http.SetCookie(w, &c)
@@ -50,20 +71,20 @@ func foo(w http.ResponseWriter, r *http.Request) {
 		c = &http.Cookie{}
 	}
 
-	message := "Not logged in!"
-
-	xs := strings.SplitN(c.Value, "|", 2)
-	if len(xs) == 2 {
-		cCode := xs[0]
-		cEmail := xs[1]
-
-		code := getCode(cEmail)
-
-		if hmac.Equal([]byte(cCode), []byte(code)) {
-			message = "Logged in!"
-		} else {
-			message = "Not logged in!"
+	ss := c.Value
+	afterVerificationToken, err := jwt.ParseWithClaims(ss, &myClaims{}, func(beforeVerificationToken *jwt.Token) (interface{}, error) {
+		if beforeVerificationToken.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+ 			return nil, fmt.Errorf("Someone tried to change sining metod")
 		}
+		return []byte(myKey), nil
+	})
+
+	//standard claims has valid method and on ParseWithClaims Valid() is called and on token Valid field is set
+	isEqual := err == nil && afterVerificationToken.Valid
+
+	message := "Not logged in!"
+	if isEqual {
+		message = "Logged in"
 	}
 
 		html := `<!DOCTYPE html>
@@ -78,7 +99,7 @@ func foo(w http.ResponseWriter, r *http.Request) {
 			<p>Hi Vuk, cookie is ` + c.Value + `</p>
 			<p>` + message + `</p>
 			<form action="/submit" method="post">	
-				<input type="email" name="email"/>
+				<input type="email" name="emailThing"/>
 				<input type="submit" name="Submit"/>
 			</form>
 		</body>
